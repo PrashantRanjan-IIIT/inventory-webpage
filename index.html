@@ -1,64 +1,558 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Inventory Webpage</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Electronics Lab Store Inventory</title>
+
   <style>
-    table {
-      border-collapse: collapse;
-      width: 100%;
+    body {
+      font-family: Arial, sans-serif;
+      margin: 30px;
+      background: #f5f7fa;
+      color: #333;
     }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 25px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    input, select {
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+
+    input {
+      flex: 1;
+      min-width: 250px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
     th, td {
       border: 1px solid #ddd;
-      padding: 8px;
+      padding: 10px;
       text-align: center;
+      vertical-align: middle;
     }
+
     th {
-      background-color: #f2f2f2;
+      background: #007acc;
+      color: white;
+      cursor: pointer;
     }
-    img {
-      max-width: 100px;
-      max-height: 100px;
+
+    tr:nth-child(even) {
+      background: #f8f8f8;
+    }
+
+    tr:hover {
+      background: #eef6ff;
+    }
+
+    .component-image {
+      width: 100px;
+      height: 100px;
+      object-fit: contain;
+      border-radius: 5px;
+      background: white;
+    }
+
+    .no-image {
+      width: 100px;
+      height: 100px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #eee;
+      color: #888;
+      margin: auto;
+    }
+
+    .product-link {
+      display: inline-block;
+      padding: 7px 12px;
+      background: #007acc;
+      color: white;
+      text-decoration: none;
+      border-radius: 5px;
+    }
+
+    .product-link:hover {
+      background: #005f99;
+    }
+
+    .quantity {
+      font-weight: bold;
+      font-size: 16px;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 30px;
+      font-size: 18px;
+      color: #777;
     }
   </style>
 </head>
+
 <body>
-  <h1>Component Inventory</h1>
-  <table id="inventoryTable"></table>
+
+  <h1>Electronics Lab Store Inventory</h1>
+
+  <div class="controls">
+
+    <input
+      type="text"
+      id="search"
+      placeholder="Search component, part number or ID..."
+    >
+
+    <select id="stockFilter">
+      <option value="all">All Components</option>
+      <option value="inStock">In Stock</option>
+      <option value="outOfStock">Out of Stock</option>
+    </select>
+
+    <select id="sortOrder">
+      <option value="none">Sort By</option>
+      <option value="quantityHigh">Quantity: High → Low</option>
+      <option value="quantityLow">Quantity: Low → High</option>
+      <option value="nameAZ">Name: A → Z</option>
+      <option value="nameZA">Name: Z → A</option>
+    </select>
+
+  </div>
+
+  <div id="inventory"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
 
   <script>
-    Papa.parse("Components.csv", {
-      download: true,
-      header: true,
-      complete: function(results) {
-        const data = results.data;
-        let table = "<tr>";
-        for (let key in data[0]) {
-          table += "<th>" + key + "</th>";
-        }
-        table += "</tr>";
 
-        data.forEach(row => {
-          table += "<tr>";
-          for (let key in row) {
-            if (key === "Photo link") {
-              // If there's a valid URL in LINK column, show image
-              if (row["LINK"]) {
-                table += `<td><img src="${row["LINK"]}" alt="Image"></td>`;
-              } else {
-                table += "<td>No image</td>";
-              }
-            } else {
-              table += "<td>" + row[key] + "</td>";
-            }
-          }
-          table += "</tr>";
-        });
+    let inventoryData = [];
 
-        document.getElementById("inventoryTable").innerHTML = table;
+    /*
+     * Extract image URL from Excel IMAGE() formula
+     *
+     * Example:
+     *
+     * =_xlfn.IMAGE(
+     * "https://example.com/image.jpg",
+     * "2026002",
+     * 0
+     * )
+     */
+    function getImageURL(value) {
+
+      if (!value) {
+        return "";
       }
+
+      value = String(value).trim();
+
+      // If already a normal URL
+      if (
+        value.startsWith("http://") ||
+        value.startsWith("https://")
+      ) {
+        return value;
+      }
+
+      // Extract URL from IMAGE("URL", ...)
+      let match = value.match(
+        /IMAGE\s*\(\s*"([^"]+)"/i
+      );
+
+      if (match) {
+        return match[1];
+      }
+
+      return "";
+    }
+
+
+    /*
+     * Convert quantity to number
+     */
+    function getQuantity(value) {
+
+      let number = parseFloat(value);
+
+      if (isNaN(number)) {
+        return 0;
+      }
+
+      return number;
+    }
+
+
+    /*
+     * Escape HTML to prevent broken table
+     */
+    function escapeHTML(value) {
+
+      if (value === null || value === undefined) {
+        return "";
+      }
+
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+
+    /*
+     * Display inventory
+     */
+    function displayInventory() {
+
+      let searchText =
+        document.getElementById("search")
+          .value
+          .toLowerCase()
+          .trim();
+
+      let stockFilter =
+        document.getElementById("stockFilter").value;
+
+      let sortOrder =
+        document.getElementById("sortOrder").value;
+
+
+      let filteredData = inventoryData.filter(row => {
+
+        let description =
+          String(row["Description"] || "").toLowerCase();
+
+        let partNo =
+          String(row["Part No"] || "").toLowerCase();
+
+        let uniqueID =
+          String(row["Unique ID"] || "").toLowerCase();
+
+
+        let matchesSearch =
+          description.includes(searchText) ||
+          partNo.includes(searchText) ||
+          uniqueID.includes(searchText);
+
+
+        let quantity =
+          getQuantity(row["STORE quantity"]);
+
+
+        let matchesStock = true;
+
+        if (stockFilter === "inStock") {
+          matchesStock = quantity > 0;
+        }
+
+        if (stockFilter === "outOfStock") {
+          matchesStock = quantity <= 0;
+        }
+
+
+        return matchesSearch && matchesStock;
+
+      });
+
+
+      /*
+       * Sorting
+       */
+      if (sortOrder === "quantityHigh") {
+
+        filteredData.sort(
+          (a, b) =>
+            getQuantity(b["STORE quantity"]) -
+            getQuantity(a["STORE quantity"])
+        );
+
+      }
+
+      else if (sortOrder === "quantityLow") {
+
+        filteredData.sort(
+          (a, b) =>
+            getQuantity(a["STORE quantity"]) -
+            getQuantity(b["STORE quantity"])
+        );
+
+      }
+
+      else if (sortOrder === "nameAZ") {
+
+        filteredData.sort(
+          (a, b) =>
+            String(a["Description"] || "")
+              .localeCompare(
+                String(b["Description"] || "")
+              )
+        );
+
+      }
+
+      else if (sortOrder === "nameZA") {
+
+        filteredData.sort(
+          (a, b) =>
+            String(b["Description"] || "")
+              .localeCompare(
+                String(a["Description"] || "")
+              )
+        );
+
+      }
+
+
+      /*
+       * Create table
+       */
+
+      let html = `
+        <table>
+
+          <thead>
+            <tr>
+              <th>Unique ID</th>
+              <th>Location</th>
+              <th>Image</th>
+              <th>Part No</th>
+              <th>Description</th>
+              <th>Store Quantity</th>
+              <th>Product</th>
+            </tr>
+          </thead>
+
+          <tbody>
+      `;
+
+
+      if (filteredData.length === 0) {
+
+        html += `
+          <tr>
+            <td colspan="7" class="empty">
+              No components found
+            </td>
+          </tr>
+        `;
+
+      }
+
+
+      filteredData.forEach(row => {
+
+        let imageURL =
+          getImageURL(row["Photo link"]);
+
+        let productURL =
+          String(row["LINK"] || "").trim();
+
+        let quantity =
+          getQuantity(row["STORE quantity"]);
+
+
+        /*
+         * Image
+         */
+
+        let imageHTML = "";
+
+        if (imageURL) {
+
+          imageHTML = `
+            <img
+              class="component-image"
+              src="${escapeHTML(imageURL)}"
+              alt="${escapeHTML(row["Description"])}"
+              loading="lazy"
+              onerror="this.style.display='none';"
+            >
+          `;
+
+        }
+
+        else {
+
+          imageHTML = `
+            <div class="no-image">
+              No Image
+            </div>
+          `;
+
+        }
+
+
+        /*
+         * Product link
+         */
+
+        let linkHTML = "";
+
+        if (
+          productURL.startsWith("http://") ||
+          productURL.startsWith("https://")
+        ) {
+
+          linkHTML = `
+            <a
+              class="product-link"
+              href="${escapeHTML(productURL)}"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              🔗 View Product
+            </a>
+          `;
+
+        }
+
+        else {
+
+          linkHTML = "—";
+
+        }
+
+
+        html += `
+          <tr>
+
+            <td>
+              ${escapeHTML(row["Unique ID"])}
+            </td>
+
+            <td>
+              ${escapeHTML(row["Location"])}
+            </td>
+
+            <td>
+              ${imageHTML}
+            </td>
+
+            <td>
+              ${escapeHTML(row["Part No"])}
+            </td>
+
+            <td>
+              ${escapeHTML(row["Description"])}
+            </td>
+
+            <td class="quantity">
+              ${quantity}
+            </td>
+
+            <td>
+              ${linkHTML}
+            </td>
+
+          </tr>
+        `;
+
+      });
+
+
+      html += `
+          </tbody>
+        </table>
+      `;
+
+
+      document.getElementById("inventory").innerHTML = html;
+
+    }
+
+
+    /*
+     * Load CSV
+     */
+
+    Papa.parse("Components.csv", {
+
+      download: true,
+
+      header: true,
+
+      skipEmptyLines: true,
+
+      complete: function(results) {
+
+        inventoryData = results.data;
+
+        displayInventory();
+
+      },
+
+      error: function(error) {
+
+        document.getElementById("inventory").innerHTML = `
+          <div class="empty">
+            Unable to load Components.csv
+          </div>
+        `;
+
+        console.error(error);
+
+      }
+
     });
+
+
+    /*
+     * Search
+     */
+
+    document
+      .getElementById("search")
+      .addEventListener(
+        "input",
+        displayInventory
+      );
+
+
+    /*
+     * Stock filter
+     */
+
+    document
+      .getElementById("stockFilter")
+      .addEventListener(
+        "change",
+        displayInventory
+      );
+
+
+    /*
+     * Sorting
+     */
+
+    document
+      .getElementById("sortOrder")
+      .addEventListener(
+        "change",
+        displayInventory
+      );
+
   </script>
+
 </body>
 </html>
