@@ -43,14 +43,14 @@
           table += "<tr>";
           for (let key in row) {
             if (key === "Photo link") {
-              // Show image thumbnail if LINK exists
+              // Replace with image thumbnail if LINK exists
               if (row["LINK"]) {
                 table += `<td><img src="${row["LINK"]}" alt="Image"></td>`;
               } else {
                 table += "<td>" + row[key] + "</td>";
               }
             } else if (key === "LINK") {
-              // Show clickable link
+              // Replace with clickable link text
               if (row["LINK"]) {
                 table += `<td><a href="${row["LINK"]}" target="_blank">${row["LINK"]}</a></td>`;
               } else {
@@ -69,4 +69,3 @@
   </script>
 </body>
 </html>
-
